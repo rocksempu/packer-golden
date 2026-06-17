@@ -1,0 +1,207 @@
+name: Image Factory — Build Azure
+
+# Alinhado à arquitetura: GitHub → Packer (init/validate/build) → SIG + HCP Packer
+# Escopo deste teste: APENAS Azure
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - '**.pkr.hcl'
+      - 'scripts/**'
+      - '.github/workflows/packer-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.pkr.hcl'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Ambiente alvo (canal HCP)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - hml
+          - prod
+      os_flavor:
+        description: 'Sistema operacional base'
+        required: true
+        default: 'ubuntu-22-04'
+        type: choice
+        options:
+          - ubuntu-22-04
+          - ubuntu-24-04
+      image_version:
+        description: 'Versão semver da imagem (SIG)'
+        required: true
+        default: '1.0.0'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PACKER_VERSION: '1.14.2'
+  PKR_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  PKR_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+  PKR_VAR_azure_resource_group: ${{ vars.AZURE_BUILD_RESOURCE_GROUP }}
+  PKR_VAR_sig_gallery_resource_group: ${{ vars.AZURE_SIG_RESOURCE_GROUP }}
+  PKR_VAR_sig_gallery_name: ${{ vars.AZURE_SIG_GALLERY_NAME || 'corpImageGallery' }}
+  PKR_VAR_sig_image_definition: ${{ vars.AZURE_SIG_IMAGE_DEFINITION || 'ubuntu-golden' }}
+  PKR_VAR_azure_location: ${{ vars.AZURE_LOCATION || 'brazilsouth' }}
+  PKR_VAR_hcp_packer_bucket_name: ${{ vars.HCP_PACKER_BUCKET_NAME || 'base-images' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Etapa 2a: packer init + validate (gatilho em PR e push)
+  # ---------------------------------------------------------------------------
+  validate:
+    name: "2. Validate"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: ${{ env.PACKER_VERSION }}
+
+      - name: Packer Init
+        run: packer init .
+
+      - name: Packer Format Check
+        run: packer fmt -check -recursive .
+
+      - name: Packer Validate
+        run: packer validate .
+
+  # ---------------------------------------------------------------------------
+  # Etapa 2b: packer build → Azure SIG + HCP Packer Registry
+  # ---------------------------------------------------------------------------
+  build:
+    name: "2. Build"
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
+
+    outputs:
+      image_version: ${{ steps.version.outputs.version }}
+      environment: ${{ steps.version.outputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolver versão e ambiente
+        id: version
+        run: |
+          ENV="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}"
+          VER="${{ github.event.inputs.image_version || format('1.0.{0}', github.run_number) }}"
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+          echo "version=${VER}" >> $GITHUB_OUTPUT
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: ${{ env.PACKER_VERSION }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to HCP
+        uses: hashicorp/hcp-auth-action@v0
+        with:
+          workload_identity_provider: ${{ secrets.HCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_principal: ${{ secrets.HCP_SERVICE_PRINCIPAL }}
+
+      - name: Packer Init
+        run: packer init .
+
+      - name: Packer Build
+        run: |
+          packer build \
+            -color=false \
+            -on-error=abort \
+            -var "environment=${{ steps.version.outputs.environment }}" \
+            -var "os_flavor=${{ github.event.inputs.os_flavor || 'ubuntu-22-04' }}" \
+            -var "image_version=${{ steps.version.outputs.version }}" \
+            .
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          HCP_PACKER_BUILD_FINGERPRINT: "run.id.${{ github.run_id }}.attempt.${{ github.run_attempt }}"
+
+  # ---------------------------------------------------------------------------
+  # Etapa 2c: post-process — verificar SIG, promover canal HCP, auditoria
+  # ---------------------------------------------------------------------------
+  post-process:
+    name: "2. Post-process"
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ needs.build.outputs.environment }}
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verificar imagem na SIG
+        run: |
+          GALLERY="${{ vars.AZURE_SIG_GALLERY_NAME || 'corpImageGallery' }}"
+          RG="${{ vars.AZURE_SIG_RESOURCE_GROUP }}"
+          DEF="${{ vars.AZURE_SIG_IMAGE_DEFINITION || 'ubuntu-golden' }}"
+          VER="${{ needs.build.outputs.image_version }}"
+
+          echo "Verificando ${GALLERY}/${DEF}:${VER}..."
+          az sig image-version show \
+            --gallery-name "${GALLERY}" \
+            --gallery-image-definition "${DEF}" \
+            --gallery-image-version "${VER}" \
+            --resource-group "${RG}" \
+            -o table
+
+      - name: Authenticate to HCP
+        uses: hashicorp/hcp-auth-action@v0
+        with:
+          workload_identity_provider: ${{ secrets.HCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_principal: ${{ secrets.HCP_SERVICE_PRINCIPAL }}
+
+      - name: Setup HCP CLI
+        uses: hashicorp/hcp-setup-action@v0
+        with:
+          version: latest
+
+      - name: Promover iteração para canal HCP
+        run: |
+          BUCKET="${{ vars.HCP_PACKER_BUCKET_NAME || 'base-images' }}"
+          CHANNEL="${{ needs.build.outputs.environment }}"
+          ITERATION=$(hcp packer buckets list-iterations "${BUCKET}" --format json | jq -r '.[0].id')
+
+          echo "Promovendo iteração ${ITERATION} → canal ${CHANNEL}"
+          hcp packer channels add-iteration "${BUCKET}" "${CHANNEL}" --iteration-id "${ITERATION}"
+
+      - name: Resumo do build
+        run: |
+          echo "### Image Factory — Build Azure" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Etapa | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cloud | Azure (SIG) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ambiente / Canal | ${{ needs.build.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Versão SIG | ${{ needs.build.outputs.image_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bucket HCP | ${{ vars.HCP_PACKER_BUCKET_NAME || 'base-images' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | ${{ github.run_id }} |" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,6 @@
+# Copie para sandbox.pkrvars.hcl e preencha o RG learn-*
+learn_resource_group = "learn-COLE-AQUI-O-ID-DO-PORTAL"
+azure_location       = "eastus"
+image_version        = "1.0.0"
+os_flavor            = "ubuntu-22-04"
+enable_hcp_registry  = "false"

@@ -1,0 +1,66 @@
+name: Promote to Channel
+
+# Promoção manual entre canais HCP: dev → hml → prod
+# Use após validação em cada ambiente
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Canal HCP Packer de destino'
+        required: true
+        type: choice
+        options:
+          - dev
+          - hml
+          - prod
+      bucket_name:
+        description: 'Bucket HCP Packer'
+        required: true
+        default: 'base-images'
+      iteration_id:
+        description: 'ID da iteração (vazio = mais recente)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  promote:
+    name: Promote → ${{ inputs.channel }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.channel == 'prod' && 'prod' || 'dev' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to HCP
+        uses: hashicorp/hcp-auth-action@v0
+        with:
+          workload_identity_provider: ${{ secrets.HCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_principal: ${{ secrets.HCP_SERVICE_PRINCIPAL }}
+
+      - name: Setup HCP CLI
+        uses: hashicorp/hcp-setup-action@v0
+        with:
+          version: latest
+
+      - name: Promover iteração
+        run: |
+          BUCKET="${{ inputs.bucket_name }}"
+          CHANNEL="${{ inputs.channel }}"
+          ITERATION="${{ inputs.iteration_id }}"
+
+          if [ -z "${ITERATION}" ]; then
+            ITERATION=$(hcp packer buckets list-iterations "${BUCKET}" --format json | jq -r '.[0].id')
+          fi
+
+          hcp packer channels add-iteration "${BUCKET}" "${CHANNEL}" --iteration-id "${ITERATION}"
+
+          echo "### Promoção HCP Packer" >> $GITHUB_STEP_SUMMARY
+          echo "| Bucket | ${BUCKET} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Canal | ${CHANNEL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Iteração | ${ITERATION} |" >> $GITHUB_STEP_SUMMARY

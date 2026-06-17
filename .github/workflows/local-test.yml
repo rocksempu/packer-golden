@@ -1,0 +1,56 @@
+name: Local Test (no Azure)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'packer.pkr.hcl'
+      - '**.pkr.hcl'
+      - '.github/workflows/local-test.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'scripts/**'
+      - 'packer.pkr.hcl'
+      - '**.pkr.hcl'
+      - '.github/workflows/local-test.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  packer-validate:
+    name: Packer fmt/validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: '1.14.2'
+
+      - name: Packer Init
+        run: packer init .
+
+      - name: Packer Format Check
+        run: packer fmt -check -recursive .
+
+      - name: Packer Validate
+        run: packer validate .
+
+  provisioner-smoke:
+    name: Provisioners smoke test (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run provisioners in Ubuntu container
+        run: |
+          chmod +x scripts/setup/local-test.sh
+          scripts/setup/local-test.sh
+

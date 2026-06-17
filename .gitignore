@@ -1,0 +1,30 @@
+# Packer
+*.pkrvars.hcl
+!variables.pkrvars.hcl.example
+!sandbox/sandbox.pkrvars.hcl.example
+packer_cache/
+packer-manifest.json
+
+# Bootstrap output (contém IDs — não commitar)
+scripts/setup/output/
+
+# Azure
+.azure/
+
+# Secrets
+.env
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log

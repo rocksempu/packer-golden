@@ -1,0 +1,73 @@
+name: HCP Packer — Register Test (no Azure)
+
+# Registra uma iteracao no HCP Packer usando builder Docker (sem subscription Azure)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_version:
+        description: 'Versao da iteracao'
+        required: true
+        default: '1.0.0'
+  push:
+    branches: [main]
+    paths:
+      - 'hcp-test/**'
+      - '.github/workflows/hcp-register.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PACKER_VERSION: '1.14.2'
+  HCP_PORTAL_URL: 'https://portal.cloud.hashicorp.com/org/rocksempu-org/packer'
+
+jobs:
+  register:
+    name: Register iteration in HCP Packer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to HCP
+        uses: hashicorp/hcp-auth-action@v0
+        with:
+          workload_identity_provider: ${{ secrets.HCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_principal: ${{ secrets.HCP_SERVICE_PRINCIPAL }}
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: ${{ env.PACKER_VERSION }}
+
+      - name: Packer build (Docker → HCP Registry)
+        working-directory: hcp-test
+        run: |
+          packer init .
+          packer validate .
+          packer build \
+            -color=false \
+            -on-error=abort \
+            -var "image_version=${{ github.event.inputs.image_version || format('1.0.{0}', github.run_number) }}" \
+            .
+        env:
+          HCP_PROJECT_ID: '1c7acb8d-7539-4a33-8d4d-5ab419faaa85'
+          HCP_PACKER_BUILD_FINGERPRINT: "hcp-test.run.${{ github.run_id }}.attempt.${{ github.run_attempt }}"
+
+      - name: Resumo — ver no portal HCP
+        run: |
+          BUCKET="${{ vars.HCP_PACKER_BUCKET_NAME || 'base-images' }}"
+          VER="${{ github.event.inputs.image_version || format('1.0.{0}', github.run_number) }}"
+          echo "### Iteracao registrada no HCP Packer" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Bucket | \`${BUCKET}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Versao | \`${VER}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Builder | Docker (teste sem Azure) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal | [Abrir HCP Packer](${HCP_PORTAL_URL}) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No portal: **Packer → bucket ${BUCKET} → Iterations**" >> $GITHUB_STEP_SUMMARY

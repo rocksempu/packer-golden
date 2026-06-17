@@ -1,0 +1,31 @@
+# Image Factory Azure — variáveis locais
+# Copie para variables.pkrvars.hcl
+
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+azure_tenant_id       = "00000000-0000-0000-0000-000000000000"
+azure_client_id       = "00000000-0000-0000-0000-000000000000"
+azure_client_secret   = "seu-client-secret-aqui"
+
+# RG da VM temporária de build
+azure_resource_group = "rg-packer-build"
+azure_location       = "brazilsouth"
+
+# Azure Compute Gallery (SIG)
+sig_gallery_name             = "corpImageGallery"
+sig_gallery_resource_group   = "rg-image-factory"
+sig_image_definition         = "ubuntu-golden"
+sig_replication_regions      = ["brazilsouth"]
+
+image_name    = "golden-ubuntu-22-04"
+image_version = "1.0.0"
+environment   = "dev"
+os_flavor     = "ubuntu-22-04"
+
+# HCP Packer Registry
+hcp_packer_bucket_name        = "base-images"
+hcp_packer_bucket_description = "Golden images Azure — Image Factory"
+
+install_docker           = "true"
+install_azure_cli        = "true"
+install_monitoring_agent = "true"
+install_edr_agent        = "false"
