@@ -41,7 +41,7 @@ jobs:
         uses: hashicorp/hcp-auth-action@v0
         with:
           workload_identity_provider: ${{ secrets.HCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_principal: ${{ secrets.HCP_SERVICE_PRINCIPAL }}
+          audience: https://github.com/rocksempu
 
       - name: Setup HCP CLI
         uses: hashicorp/hcp-setup-action@v0
