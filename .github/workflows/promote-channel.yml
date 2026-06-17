@@ -19,13 +19,17 @@ on:
         required: true
         default: 'base-images'
       iteration_id:
-        description: 'ID da iteração (vazio = mais recente)'
+        description: 'Fingerprint da versão (vazio = mais recente)'
         required: false
         default: ''
 
 permissions:
   contents: read
   id-token: write
+
+env:
+  HCP_ORG_ID: '36728d8a-278b-44b1-af7d-462d60a11f6a'
+  HCP_PROJECT_ID: '1c7acb8d-7539-4a33-8d4d-5ab419faaa85'
 
 jobs:
   promote:
@@ -50,17 +54,13 @@ jobs:
 
       - name: Promover iteração
         run: |
-          BUCKET="${{ inputs.bucket_name }}"
-          CHANNEL="${{ inputs.channel }}"
-          ITERATION="${{ inputs.iteration_id }}"
-
-          if [ -z "${ITERATION}" ]; then
-            ITERATION=$(hcp packer buckets list-iterations "${BUCKET}" --format json | jq -r '.[0].id')
-          fi
-
-          hcp packer channels add-iteration "${BUCKET}" "${CHANNEL}" --iteration-id "${ITERATION}"
+          chmod +x scripts/setup/hcp-promote-channel.sh
+          scripts/setup/hcp-promote-channel.sh \
+            "${{ inputs.bucket_name }}" \
+            "${{ inputs.channel }}" \
+            "${{ inputs.iteration_id }}"
 
           echo "### Promoção HCP Packer" >> $GITHUB_STEP_SUMMARY
-          echo "| Bucket | ${BUCKET} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Canal | ${CHANNEL} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Iteração | ${ITERATION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bucket | ${{ inputs.bucket_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Canal | ${{ inputs.channel }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Fingerprint | ${{ inputs.iteration_id || 'mais recente' }} |" >> $GITHUB_STEP_SUMMARY

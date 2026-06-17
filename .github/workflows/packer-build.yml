@@ -187,12 +187,13 @@ jobs:
 
       - name: Promover iteração para canal HCP
         run: |
-          BUCKET="${{ vars.HCP_PACKER_BUCKET_NAME || 'base-images' }}"
-          CHANNEL="${{ needs.build.outputs.environment }}"
-          ITERATION=$(hcp packer buckets list-iterations "${BUCKET}" --format json | jq -r '.[0].id')
-
-          echo "Promovendo iteração ${ITERATION} → canal ${CHANNEL}"
-          hcp packer channels add-iteration "${BUCKET}" "${CHANNEL}" --iteration-id "${ITERATION}"
+          chmod +x scripts/setup/hcp-promote-channel.sh
+          scripts/setup/hcp-promote-channel.sh \
+            "${{ vars.HCP_PACKER_BUCKET_NAME || 'base-images' }}" \
+            "${{ needs.build.outputs.environment }}"
+        env:
+          HCP_ORG_ID: '36728d8a-278b-44b1-af7d-462d60a11f6a'
+          HCP_PROJECT_ID: '1c7acb8d-7539-4a33-8d4d-5ab419faaa85'
 
       - name: Resumo do build
         run: |
